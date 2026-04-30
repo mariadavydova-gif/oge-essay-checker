@@ -45,9 +45,153 @@ def health():
     return {"status": "ok"}
 
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "4000"))
 
 _supabase_client = None
+
+
+EVALUATION_TOOL = {
+    "name": "return_essay_evaluation",
+    "description": "Return the OGE essay evaluation as a structured object.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "task_type": {
+                "type": "string",
+                "enum": ["13.1", "13.2", "13.3"],
+            },
+            "word_count": {
+                "type": "integer",
+            },
+            "evaluation_status": {
+                "type": "string",
+                "enum": ["OK", "NOT_EVALUATED", "ZERO_FOR_SK"],
+            },
+            "official_content_score": {
+                "type": "integer",
+            },
+            "official_language_score_mode": {
+                "type": "string",
+            },
+            "scores": {
+                "type": "object",
+                "properties": {
+                    "СК1": {"type": "integer"},
+                    "СК2": {"type": "integer"},
+                    "СК3": {"type": "integer"},
+                    "СК4": {"type": "integer"},
+                    "ГК1": {"type": "integer"},
+                    "ГК2": {"type": "integer"},
+                    "ГК3": {"type": "integer"},
+                    "ГК4": {"type": "integer"},
+                    "ФК1": {"type": "integer"},
+                },
+                "required": [
+                    "СК1",
+                    "СК2",
+                    "СК3",
+                    "СК4",
+                    "ГК1",
+                    "ГК2",
+                    "ГК3",
+                    "ГК4",
+                    "ФК1",
+                ],
+            },
+            "errors": {
+                "type": "object",
+                "properties": {
+                    "orthography": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "punctuation": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "grammar": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "speech": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "logic": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "facts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": [
+                    "orthography",
+                    "punctuation",
+                    "grammar",
+                    "speech",
+                    "logic",
+                    "facts",
+                ],
+            },
+            "analysis": {
+                "type": "object",
+                "properties": {
+                    "СК1": {"type": "string"},
+                    "СК2": {"type": "string"},
+                    "СК3": {"type": "string"},
+                    "СК4": {"type": "string"},
+                    "ГК1": {"type": "string"},
+                    "ГК2": {"type": "string"},
+                    "ГК3": {"type": "string"},
+                    "ГК4": {"type": "string"},
+                    "ФК1": {"type": "string"},
+                },
+                "required": [
+                    "СК1",
+                    "СК2",
+                    "СК3",
+                    "СК4",
+                    "ГК1",
+                    "ГК2",
+                    "ГК3",
+                    "ГК4",
+                    "ФК1",
+                ],
+            },
+            "recommendations": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "annotated_text": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "fragment": {"type": "string"},
+                        "issue": {"type": "string"},
+                        "comment": {"type": "string"},
+                    },
+                    "required": ["fragment", "issue", "comment"],
+                },
+            },
+        },
+        "required": [
+            "task_type",
+            "word_count",
+            "evaluation_status",
+            "official_content_score",
+            "official_language_score_mode",
+            "scores",
+            "errors",
+            "analysis",
+            "recommendations",
+            "annotated_text",
+        ],
+    },
+}
 
 
 def extract_json(text: str) -> str:
@@ -69,6 +213,29 @@ def extract_json(text: str) -> str:
         raise ValueError("JSON не найден в ответе модели")
 
     return text[start:end + 1]
+
+
+def extract_structured_result(response) -> dict:
+    raw_text = ""
+
+    if response.content:
+        for block in response.content:
+            block_type = getattr(block, "type", None)
+
+            if block_type == "tool_use" and getattr(block, "name", None) == "return_essay_evaluation":
+                data = getattr(block, "input", None)
+
+                if isinstance(data, dict):
+                    return data
+
+            if hasattr(block, "text"):
+                raw_text += block.text
+
+    if raw_text:
+        clean = extract_json(raw_text)
+        return json.loads(clean)
+
+    raise ValueError("Модель не вернула структурированный результат проверки")
 
 
 def get_anthropic_client() -> Anthropic:
@@ -183,9 +350,14 @@ def check_essay(payload: EssayRequest, request: Request):
 
         response = anthropic_client.messages.create(
             model=MODEL,
-            max_tokens=1500,
+            max_tokens=MAX_TOKENS,
             temperature=0.1,
             system=SYSTEM_PROMPT,
+            tools=[EVALUATION_TOOL],
+            tool_choice={
+                "type": "tool",
+                "name": "return_essay_evaluation",
+            },
             messages=[
                 {
                     "role": "user",
@@ -198,14 +370,7 @@ def check_essay(payload: EssayRequest, request: Request):
             ],
         )
 
-        raw = ""
-        if response.content:
-            for block in response.content:
-                if hasattr(block, "text"):
-                    raw += block.text
-
-        clean = extract_json(raw)
-        data = json.loads(clean)
+        data = extract_structured_result(response)
 
         result = EssayResponse.model_validate(data)
 
