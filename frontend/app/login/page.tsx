@@ -31,6 +31,7 @@ export default function Login() {
   return (
     <div style={{ padding: 40 }}>
       <h1>Вход</h1>
+
       <form onSubmit={handleLogin}>
         <input
           placeholder="Email"
@@ -55,6 +56,14 @@ export default function Login() {
       <p>
         Не помните пароль? <Link href="/reset-password">Восстановить пароль</Link>
       </p>
+
+      <hr style={{ margin: "24px 0" }} />
+
+      <p>Ещё нет аккаунта?</p>
+
+      <button type="button" onClick={() => router.push("/register")}>
+        Зарегистрироваться
+      </button>
     </div>
   )
 }
