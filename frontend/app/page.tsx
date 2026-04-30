@@ -34,20 +34,31 @@ function highlightText(text: string, annotations: Result['annotated_text']) {
   let parts: ReactNode[] = [text];
 
   annotations.slice(0, 20).forEach((a, i) => {
-    parts = parts.flatMap((part) => {
-      if (typeof part !== 'string' || !a.fragment) return [part];
+    const nextParts: ReactNode[] = [];
+
+    parts.forEach((part) => {
+      if (typeof part !== 'string' || !a.fragment) {
+        nextParts.push(part);
+        return;
+      }
 
       const idx = part.indexOf(a.fragment);
-      if (idx === -1) return [part];
 
-      return [
+      if (idx === -1) {
+        nextParts.push(part);
+        return;
+      }
+
+      nextParts.push(
         part.slice(0, idx),
         <mark key={`${a.fragment}-${i}`} title={`${a.issue}: ${a.comment}`}>
           {a.fragment}
         </mark>,
-        part.slice(idx + a.fragment.length),
-      ];
+        part.slice(idx + a.fragment.length)
+      );
     });
+
+    parts = nextParts;
   });
 
   return parts;
