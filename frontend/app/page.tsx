@@ -66,6 +66,7 @@ function highlightText(text: string, annotations: Result['annotated_text']) {
 
 export default function Page() {
   const [essay, setEssay] = useState('');
+  const [readySourceText, setReadySourceText] = useState('');
   const [taskType, setTaskType] = useState<'auto' | EssayTaskType>('auto');
   const [mode, setMode] = useState('diagnostic');
   const [workMode, setWorkMode] = useState<'topic' | 'ready'>('ready');
@@ -109,6 +110,12 @@ export default function Page() {
     [result]
   );
 
+  const isCheckDisabled =
+    loading ||
+    essay.trim().length < 20 ||
+    (workMode === 'topic' && (!selectedTaskSet || !selectedTopic)) ||
+    (workMode === 'ready' && readySourceText.trim().length < 50);
+
   async function logout() {
     await supabase.auth.signOut();
     window.location.href = '/login';
@@ -144,6 +151,16 @@ export default function Page() {
         throw new Error('Сначала войдите в аккаунт');
       }
 
+      if (workMode === 'topic' && (!selectedTaskSet || !selectedTopic)) {
+        throw new Error('Сначала получите тему и исходный текст');
+      }
+
+      if (workMode === 'ready' && readySourceText.trim().length < 50) {
+        throw new Error('Вставьте исходный текст, по которому написано сочинение');
+      }
+
+      const readySourceTextTrimmed = readySourceText.trim();
+
       const essayTextForCheck =
         selectedTaskSet && selectedTopic
           ? `ИСХОДНЫЙ ТЕКСТ:
@@ -154,7 +171,23 @@ ${selectedTopic}
 
 СОЧИНЕНИЕ УЧЕНИКА:
 ${essay}`
-          : essay;
+          : `ИСХОДНЫЙ ТЕКСТ:
+${readySourceTextTrimmed}
+
+ТИП ЗАДАНИЯ:
+${taskType}
+
+СОЧИНЕНИЕ УЧЕНИКА:
+${essay}`;
+
+      const sourceTextForSave =
+        selectedTaskSet?.sourceText || (workMode === 'ready' ? readySourceTextTrimmed : null);
+
+      const selectedTopicForSave =
+        selectedTopic ||
+        (workMode === 'ready' && taskType !== 'auto'
+          ? `Готовое сочинение, задание ${taskType}`
+          : null);
 
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/check-essay`, {
         method: 'POST',
@@ -166,8 +199,8 @@ ${essay}`
           essay_text: essayTextForCheck,
           task_type: taskType,
           mode,
-          source_text: selectedTaskSet?.sourceText || null,
-          selected_topic: selectedTopic || null,
+          source_text: sourceTextForSave,
+          selected_topic: selectedTopicForSave,
           student_essay: essay,
         }),
       });
@@ -193,7 +226,8 @@ ${essay}`
           <p className="eyebrow">ОГЭ русский язык · задание 13</p>
           <h1>Проверка сочинения за 1 клик</h1>
           <p className="muted">
-            Получите случайную тему с исходным текстом или вставьте готовое сочинение.
+            Получите случайную тему с исходным текстом или вставьте исходный текст и готовое
+            сочинение.
           </p>
 
           <p className="muted">{userEmail}</p>
@@ -270,19 +304,39 @@ ${essay}`
         )}
 
         {workMode === 'ready' && (
-          <div className="toolbar">
-            <select value={taskType} onChange={(e) => setTaskType(e.target.value as 'auto' | EssayTaskType)}>
-              <option value="auto">Автоопределение</option>
-              <option value="13.1">13.1</option>
-              <option value="13.2">13.2</option>
-              <option value="13.3">13.3</option>
-            </select>
+          <>
+            <div className="toolbar">
+              <select value={taskType} onChange={(e) => setTaskType(e.target.value as 'auto' | EssayTaskType)}>
+                <option value="auto">Автоопределение</option>
+                <option value="13.1">13.1</option>
+                <option value="13.2">13.2</option>
+                <option value="13.3">13.3</option>
+              </select>
 
-            <select value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="diagnostic">diagnostic</option>
-              <option value="strict_official">strict_official</option>
-            </select>
-          </div>
+              <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="diagnostic">diagnostic</option>
+                <option value="strict_official">strict_official</option>
+              </select>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <label style={{ display: 'block', marginBottom: 8 }}>
+                <b>Исходный текст</b>
+              </label>
+
+              <textarea
+                value={readySourceText}
+                onChange={(e) => setReadySourceText(e.target.value)}
+                placeholder="Вставьте исходный текст из задания ОГЭ, по которому написано сочинение..."
+                style={{ minHeight: 220 }}
+              />
+
+              <p className="muted">
+                Без исходного текста проверка будет некорректной: невозможно оценить примеры,
+                фактическую точность и соответствие теме.
+              </p>
+            </div>
+          </>
         )}
 
         {workMode === 'topic' && (
@@ -294,19 +348,37 @@ ${essay}`
           </div>
         )}
 
-        <textarea
-          value={essay}
-          onChange={(e) => setEssay(e.target.value)}
-          placeholder={
-            workMode === 'topic'
-              ? 'Напишите сочинение по выбранной теме...'
-              : 'Вставьте готовое сочинение...'
-          }
-        />
+        <div style={{ marginTop: 16 }}>
+          <label style={{ display: 'block', marginBottom: 8 }}>
+            <b>{workMode === 'ready' ? 'Сочинение ученика' : 'Сочинение по выбранной теме'}</b>
+          </label>
 
-        <button onClick={check} disabled={loading || essay.trim().length < 20} type="button">
+          <textarea
+            value={essay}
+            onChange={(e) => setEssay(e.target.value)}
+            placeholder={
+              workMode === 'topic'
+                ? 'Напишите сочинение по выбранной теме...'
+                : 'Вставьте готовое сочинение ученика...'
+            }
+          />
+        </div>
+
+        <button onClick={check} disabled={isCheckDisabled} type="button">
           {loading ? 'Проверяем...' : 'Проверить'}
         </button>
+
+        {workMode === 'ready' && readySourceText.trim().length < 50 && (
+          <p className="muted">
+            Для проверки готового сочинения сначала вставьте исходный текст.
+          </p>
+        )}
+
+        {workMode === 'topic' && (!selectedTaskSet || !selectedTopic) && (
+          <p className="muted">
+            Для режима «Получить тему» сначала нажмите «Случайная тема».
+          </p>
+        )}
 
         {error && <p className="error">{error}</p>}
       </section>
